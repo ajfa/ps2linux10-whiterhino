@@ -50,6 +50,8 @@ EthDevice = Auto
 InterceptDHCP = true
 AutoMask = true
 AutoGateway = true
+ModeDNS1 = Internal
+ModeDNS2 = Manual
 [USB1]
 Type = hidkbd
 [USB2]
