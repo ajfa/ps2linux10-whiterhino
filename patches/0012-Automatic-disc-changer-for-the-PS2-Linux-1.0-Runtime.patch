@@ -1,0 +1,105 @@
+From cfa3d6749c144a3d7968804da7fe903379a8a555 Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 12/13] Automatic disc changer for the PS2 Linux 1.0 Runtime
+ Environment
+
+The RTE asks for DISC 2 (kernel) and then DISC 1 (modules) on every boot. With
+WHITERHINO_DISC_HOOK_PC pointing at its disc check (0x010067a4 in PBPX_955.09, s0 =
+wanted disc) and WHITERHINO_DISC_A/B naming the ISOs, the emulator loads the disc the
+RTE asks for. WHITERHINO_DISC_SWAP adds a file-driven swap for headless runs.
+---
+ pcsx2-qt/QtHost.cpp | 24 ++++++++++++++++++++++++
+ pcsx2/R5900.cpp     | 20 ++++++++++++++++++++
+ pcsx2/R5900.h       |  2 ++
+ 3 files changed, 46 insertions(+)
+
+diff --git a/pcsx2-qt/QtHost.cpp b/pcsx2-qt/QtHost.cpp
+index 1491aae..d8dcd6f 100644
+--- a/pcsx2-qt/QtHost.cpp
++++ b/pcsx2-qt/QtHost.cpp
+@@ -1202,6 +1202,30 @@ void Host::OpenHostFileSelectorAsync(std::string_view title, bool select_directo
+ void Host::PumpMessagesOnCPUThread()
+ {
+ 	g_emu_thread->getEventLoop()->processEvents(QEventLoop::AllEvents);
++
++	// ps2linux rig: headless disc swap. If $WHITERHINO_DISC_SWAP names a file, its
++	// contents (an ISO path, or empty to eject) are loaded and the file is removed.
++	static const char* s_swapFile = std::getenv("WHITERHINO_DISC_SWAP");
++	static u32 s_swapPoll = 0;
++	if (s_swapFile && (++s_swapPoll % 30) == 0 && FileSystem::FileExists(s_swapFile))
++	{
++		std::optional<std::string> want = FileSystem::ReadFileToString(s_swapFile);
++		FileSystem::DeleteFilePath(s_swapFile);
++		std::string iso = want.value_or("");
++		while (!iso.empty() && (iso.back() == '\n' || iso.back() == '\r'))
++			iso.pop_back();
++		Console.WriteLn("ps2linux: disc swap -> '%s'", iso.c_str());
++		if (VMManager::HasValidVM())
++			VMManager::ChangeDisc(iso.empty() ? CDVD_SourceType::NoDisc : CDVD_SourceType::Iso, iso);
++	}
++	// ps2linux rig: disc asked for by the RTE (see kernelreloadedCheckBreakpoint).
++	if (!g_pendingDiscSwap.empty() && VMManager::HasValidVM())
++	{
++		const std::string iso = std::move(g_pendingDiscSwap);
++		g_pendingDiscSwap.clear();
++		Console.WriteLn("ps2linux: automatic disc change -> '%s'", iso.c_str());
++		VMManager::ChangeDisc(CDVD_SourceType::Iso, iso);
++	}
+ }
+ 
+ void Host::RunOnCPUThread(std::function<void()> function, bool block /* = false */)
+diff --git a/pcsx2/R5900.cpp b/pcsx2/R5900.cpp
+index b659c00..b238a2a 100644
+--- a/pcsx2/R5900.cpp
++++ b/pcsx2/R5900.cpp
+@@ -300,6 +300,7 @@ void kernelreloadedSetBreakpoints(const char* addrListCsv)
+ }
+ 
+ bool g_guestKernelUp = false;
++std::string g_pendingDiscSwap; // ps2linux rig: disc the RTE asked for, loaded by the host pump
+ 
+ void kernelreloadedCheckBreakpoint(u32 pc)
+ {
+@@ -312,6 +313,25 @@ void kernelreloadedCheckBreakpoint(u32 pc)
+ 		g_guestKernelUp = true;
+ 		Console.WriteLn("netbsd-ps2: guest kernel entered at 0x%08x, BIOS syscall HLE off for user mode", pc);
+ 	}
++	// ps2linux rig: automatic disc changer for the PS2 Linux 1.0 RTE. At the disc check in
++	// PBPX_955.09 (WHITERHINO_DISC_HOOK_PC) s0 holds the wanted disc: 0 = DISC 1, 1 = DISC 2.
++	static const u32 s_discPc = [] {
++		const char* e = std::getenv("WHITERHINO_DISC_HOOK_PC");
++		return e ? static_cast<u32>(std::strtoul(e, nullptr, 0)) : 0u;
++	}();
++	if (s_discPc && pc == s_discPc && !g_guestKernelUp)
++	{
++		static const char* s_discA = std::getenv("WHITERHINO_DISC_A");
++		static const char* s_discB = std::getenv("WHITERHINO_DISC_B");
++		static u32 s_loaded = 0;
++		const u32 want = cpuRegs.GPR.n.s0.UL[0];
++		if (s_discA && s_discB && want <= 1 && want != s_loaded)
++		{
++			s_loaded = want;
++			g_pendingDiscSwap = want ? s_discB : s_discA;
++			Console.WriteLn("ps2linux: RTE asks for DISC %u", want + 1);
++		}
++	}
+ 	if (s_kernelreloadedBreakpoints.empty())
+ 		return;
+ 	for (const u32 addr : s_kernelreloadedBreakpoints)
+diff --git a/pcsx2/R5900.h b/pcsx2/R5900.h
+index 888f618..298d40b 100644
+--- a/pcsx2/R5900.h
++++ b/pcsx2/R5900.h
+@@ -417,6 +417,8 @@ extern void kernelreloadedCheckBreakpoint(u32 pc);
+ // netbsd-ps2 rig: true once the EE has reached WHITERHINO_GUEST_ENTRY (the guest
+ // kernel's entry point); from then on user-mode SYSCALLs belong to the guest OS.
+ extern bool g_guestKernelUp;
++#include <string>
++extern std::string g_pendingDiscSwap;
+ 
+ // kernelreloaded: bounded instruction-fetch trace over an address range,
+ // armed by -kload-trace-range "start,end[,maxHits]" (hex start/end, decimal
+-- 
+2.34.1
+

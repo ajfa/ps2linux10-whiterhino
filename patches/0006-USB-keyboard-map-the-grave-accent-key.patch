@@ -1,0 +1,26 @@
+From 9c739d20e4c12afca119d6c6ad8f0975eed919a0 Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 06/13] USB keyboard: map the grave accent key
+
+Q_KEY_CODE_GRAVE_ACCENT was bound to "Agrave", so ` and ~ never reached the guest.
+---
+ pcsx2/USB/usb-hid/usb-hid.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/pcsx2/USB/usb-hid/usb-hid.cpp b/pcsx2/USB/usb-hid/usb-hid.cpp
+index 3c23d76..3cae553 100644
+--- a/pcsx2/USB/usb-hid/usb-hid.cpp
++++ b/pcsx2/USB/usb-hid/usb-hid.cpp
+@@ -455,7 +455,7 @@ namespace usb_hid
+ 		{Q_KEY_CODE_FIND, "Find"},
+ 		{Q_KEY_CODE_FRONT, "Front"},
+ 		{Q_KEY_CODE_G, "G"},
+-		{Q_KEY_CODE_GRAVE_ACCENT, "Agrave"},
++		{Q_KEY_CODE_GRAVE_ACCENT, "QuoteLeft"}, // netbsd-ps2 rig: was "Agrave", so ` and ~ never reached the guest
+ 		{Q_KEY_CODE_H, "H"},
+ 		{Q_KEY_CODE_HELP, "Help"},
+ 		{Q_KEY_CODE_HENKAN, "Henkan"},
+-- 
+2.34.1
+

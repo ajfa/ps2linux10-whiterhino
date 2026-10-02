@@ -1,0 +1,38 @@
+From 3921e948d57278a77d955a812b5bc1f278940693 Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 10/13] ATA: reset DMA transfer counters at the start of every
+ command
+
+After an aborted DMA transfer rdTransferred/wrTransferred kept their value and the
+next command copied at that offset past its new buffer: heap corruption and abort
+("corrupted size vs. prev_size").
+---
+ pcsx2/DEV9/ATA/Commands/ATA_CmdDMA.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/pcsx2/DEV9/ATA/Commands/ATA_CmdDMA.cpp b/pcsx2/DEV9/ATA/Commands/ATA_CmdDMA.cpp
+index e166009..d62d2c3 100644
+--- a/pcsx2/DEV9/ATA/Commands/ATA_CmdDMA.cpp
++++ b/pcsx2/DEV9/ATA/Commands/ATA_CmdDMA.cpp
+@@ -7,6 +7,7 @@
+ void ATA::DRQCmdDMADataToHost()
+ {
+ 	//Ready to Start DMA
++	rdTransferred = 0; // ps2linux rig: an aborted transfer must not offset the next one
+ 	regStatus &= ~ATA_STAT_BUSY;
+ 	regStatus |= ATA_STAT_DRQ;
+ 	dmaReady = true;
+@@ -34,6 +35,9 @@ void ATA::DRQCmdDMADataFromHost()
+ 		return;
+ 
+ 	nsectorLeft = nsector;
++	// ps2linux rig: an aborted transfer must not offset the next one
++	delete[] currentWrite;
++	wrTransferred = 0;
+ 	currentWrite = new u8[nsector * 512];
+ 	currentWriteLength = nsector * 512;
+ 	currentWriteSectors = HDD_GetLBA();
+-- 
+2.34.1
+

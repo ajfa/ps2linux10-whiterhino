@@ -1,0 +1,36 @@
+From 49906163052d8877a1a2ebfa638c57b10c34a97b Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 11/13] GS: let VESA modes show up to 1280x1024
+
+VideoModeOffsets capped VESA at 640x480, so PS2 Linux X at 800x600 or 1024x768 was
+cropped to its top-left corner.
+---
+ pcsx2/GS/GSState.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/pcsx2/GS/GSState.cpp b/pcsx2/GS/GSState.cpp
+index 2bd7b40..50d1391 100644
+--- a/pcsx2/GS/GSState.cpp
++++ b/pcsx2/GS/GSState.cpp
+@@ -6002,7 +6002,7 @@ bool GSState::GSTransferBuffer::Update(int tw, int th, int bpp, int& len)
+ static inline constexpr GSVector4i VideoModeOffsets[6] = {
+ 	GSVector4i::cxpr(640, 224, 642, 25),
+ 	GSVector4i::cxpr(640, 256, 676, 36),
+-	GSVector4i::cxpr(640, 480, 276, 34),
++	GSVector4i::cxpr(1280, 1024, 276, 34), // ps2linux rig: VESA goes up to 1280x1024 (PS2 Linux X), was 640x480
+ 	GSVector4i::cxpr(720, 480, 232, 35),
+ 	GSVector4i::cxpr(1280, 720, 302, 24),
+ 	GSVector4i::cxpr(1920, 540, 238, 40)
+@@ -6011,7 +6011,7 @@ static inline constexpr GSVector4i VideoModeOffsets[6] = {
+ static inline constexpr GSVector4i VideoModeOffsetsOverscan[6] = {
+ 	GSVector4i::cxpr(711, 240, 498, 17),
+ 	GSVector4i::cxpr(711, 288, 532, 21),
+-	GSVector4i::cxpr(640, 480, 276, 34),
++	GSVector4i::cxpr(1280, 1024, 276, 34), // ps2linux rig: VESA goes up to 1280x1024 (PS2 Linux X), was 640x480
+ 	GSVector4i::cxpr(720, 480, 232, 35),
+ 	GSVector4i::cxpr(1280, 720, 302, 24),
+ 	GSVector4i::cxpr(1920, 540, 238, 40)
+-- 
+2.34.1
+

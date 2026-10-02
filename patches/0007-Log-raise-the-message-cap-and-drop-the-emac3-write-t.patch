@@ -1,0 +1,42 @@
+From 595052425c25b761afb34ba3b77ef0a89082c9fb Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 07/13] Log: raise the message cap and drop the emac3 write
+ trace
+
+200000 messages cut long OS boots short; emac3 writes alone ate the budget.
+---
+ common/Console.cpp  | 2 +-
+ pcsx2/DEV9/smap.cpp | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/common/Console.cpp b/common/Console.cpp
+index 66d5409..c32a9d5 100644
+--- a/common/Console.cpp
++++ b/common/Console.cpp
+@@ -422,7 +422,7 @@ __ri void Log::UpdateMaxLevel()
+ // budgets' job, where the pcsx2/ layer can request a VM shutdown.
+ namespace Log
+ {
+-	static constexpr u64 MAX_LOG_MESSAGES = 200000;
++	static constexpr u64 MAX_LOG_MESSAGES = 5000000; // netbsd-ps2 rig: 200000 cut long boots
+ 	static std::atomic<u64> s_total_message_count{0};
+ } // namespace Log
+ 
+diff --git a/pcsx2/DEV9/smap.cpp b/pcsx2/DEV9/smap.cpp
+index 1dc9289..31aa69e 100644
+--- a/pcsx2/DEV9/smap.cpp
++++ b/pcsx2/DEV9/smap.cpp
+@@ -320,7 +320,8 @@ void emac3_write(u32 addr)
+ 			}
+ 			break;
+ 		default:
+-			DevCon.WriteLn("DEV9: SMAP: emac3 write  %x=%x", addr, value);
++			// netbsd-ps2 rig: NetBSD writes emac3 constantly and this ate the log budget.
++			// DevCon.WriteLn("DEV9: SMAP: emac3 write  %x=%x", addr, value);
+ 			break;
+ 	}
+ 	dev9Ru32(addr) = wswap(value);
+-- 
+2.34.1
+

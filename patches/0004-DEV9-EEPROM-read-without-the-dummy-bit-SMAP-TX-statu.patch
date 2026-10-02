@@ -1,0 +1,59 @@
+From 465d485735eeefc340b5595faf97432e3b862af4 Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 04/13] DEV9: EEPROM read without the dummy bit, SMAP TX status
+ on completion
+
+NetBSD 1.6A clocks D15 right after the address, with no dummy 0 bit: every word came
+back shifted by one and the MAC checksum failed. On TX completion the hardware
+replaces the control bits with the status (0 for a clean send); leaving GENFCS/GENPAD
+set counted every packet as an output error.
+---
+ pcsx2/DEV9/DEV9.cpp | 6 +++++-
+ pcsx2/DEV9/smap.cpp | 6 ++++--
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/pcsx2/DEV9/DEV9.cpp b/pcsx2/DEV9/DEV9.cpp
+index 729ee5f..9e1d4a8 100644
+--- a/pcsx2/DEV9/DEV9.cpp
++++ b/pcsx2/DEV9/DEV9.cpp
+@@ -25,6 +25,7 @@
+ #include "DEV9.h"
+ #include "Config.h"
+ #include "smap.h"
++#include "R5900.h"
+ 
+ #ifdef _WIN32
+ #pragma warning(disable : 4244)
+@@ -587,7 +588,10 @@ void SpeedWrite(u32 addr, u16 value, int width)
+ 				case EEPROM_OPCD0:
+ 					dev9.eeprom_command = (value >> 4) & 2;
+ 					dev9.eeprom_state++;
+-					dev9.eeprom_bit = 0xFF;
++					// netbsd-ps2 rig: NetBSD 1.6A's spd_eeprom_read() clocks D15 right
++					// after the address, with no dummy 0 bit; with it every word came
++					// back shifted by one and the MAC checksum failed.
++					dev9.eeprom_bit = g_guestKernelUp ? 0 : 0xFF;
+ 					break;
+ 				case EEPROM_OPCD1:
+ 					dev9.eeprom_command |= (value >> 5) & 1;
+diff --git a/pcsx2/DEV9/smap.cpp b/pcsx2/DEV9/smap.cpp
+index f885335..1dc9289 100644
+--- a/pcsx2/DEV9/smap.cpp
++++ b/pcsx2/DEV9/smap.cpp
+@@ -227,8 +227,10 @@ void tx_process()
+ 		}
+ 
+ 
+-
+-		pbd->ctrl_stat &= ~SMAP_BD_TX_READY;
++		// netbsd-ps2 rig: on completion the hardware replaces the control bits with
++		// the TX status, which is 0 for a clean send. Leaving GENFCS/GENPAD set made
++		// NetBSD 1.6A's smap_txeof() count every packet as an output error.
++		pbd->ctrl_stat = 0;
+ 
+ 		//increase TXBD
+ 		dev9.txbdi++;
+-- 
+2.34.1
+

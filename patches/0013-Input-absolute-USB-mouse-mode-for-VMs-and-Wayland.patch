@@ -1,0 +1,140 @@
+From 24998b11defec93ce7720f49b83f5a1fddc38f71 Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 13/13] Input: absolute USB mouse mode for VMs and Wayland
+
+With a USB mouse bound PCSX2 grabs the pointer and warps it back to the centre after
+every move. A VM with mouse integration (absolute tablet) and Wayland ignore the
+warps, so the guest pointer was pinned to the screen edges. WHITERHINO_MOUSE_ABSOLUTE
+takes deltas between absolute positions with no grab, entering the window is not
+movement, WHITERHINO_MOUSE_GUEST_W scales window coordinates to the guest screen, and
+the USB HID keeps fractional movement instead of truncating it.
+---
+ pcsx2-qt/DisplayWidget.cpp    | 31 ++++++++++++++++++++++++++++---
+ pcsx2/Input/InputManager.cpp  | 13 +++++++++++++
+ pcsx2/Input/InputManager.h    |  3 +++
+ pcsx2/USB/usb-hid/usb-hid.cpp |  7 ++++++-
+ 4 files changed, 50 insertions(+), 4 deletions(-)
+
+diff --git a/pcsx2-qt/DisplayWidget.cpp b/pcsx2-qt/DisplayWidget.cpp
+index 5064d1f..ed209b3 100644
+--- a/pcsx2-qt/DisplayWidget.cpp
++++ b/pcsx2-qt/DisplayWidget.cpp
+@@ -287,6 +287,19 @@ void DisplaySurface::onResizeDebounceTimer()
+ 	emit windowResizedEvent(m_pending_window_width, m_pending_window_height, m_pending_window_scale);
+ }
+ 
++// ps2linux rig: with WHITERHINO_MOUSE_GUEST_W set, host window coordinates are scaled to the
++// guest screen (shown 4:3 inside the window), so the guest pointer moves as far as the hand does.
++static QPointF rigScaleToGuest(const QWindow* w, QPointF p)
++{
++	static const char* env = std::getenv("WHITERHINO_MOUSE_GUEST_W");
++	static const float gw = env ? std::strtof(env, nullptr) : 0.0f;
++	if (gw <= 0.0f || w->width() <= 0)
++		return p;
++	const float drawn_w = std::min(static_cast<float>(w->width()), static_cast<float>(w->height()) * 4.0f / 3.0f);
++	const float k = gw / drawn_w;
++	return QPointF(p.x() * k, p.y() * k);
++}
++
+ bool DisplaySurface::event(QEvent* event)
+ {
+ 	switch (event->type())
+@@ -298,6 +311,19 @@ bool DisplaySurface::event(QEvent* event)
+ 			return true;
+ 		}
+ 
++		case QEvent::Enter:
++		{
++			// ps2linux rig: entering the window is not movement (the guest pointer would jump).
++			if (!m_relative_mouse_enabled)
++			{
++				const qreal dpr = devicePixelRatio();
++				const QPointF mouse_pos = rigScaleToGuest(this, QPointF(mapFromGlobal(QCursor::pos())) * dpr);
++				InputManager::ResetPointerAbsolutePosition(0, static_cast<float>(mouse_pos.x()),
++					static_cast<float>(mouse_pos.y()));
++			}
++			return QWindow::event(event);
++		}
++
+ 		case QEvent::MouseMove:
+ 		{
+ 			const QMouseEvent* mouse_event = static_cast<QMouseEvent*>(event);
+@@ -307,9 +333,8 @@ bool DisplaySurface::event(QEvent* event)
+ 				const qreal dpr = devicePixelRatio();
+ 				const QPoint mouse_pos = mouse_event->pos();
+ 
+-				const float scaled_x = static_cast<float>(static_cast<qreal>(mouse_pos.x()) * dpr);
+-				const float scaled_y = static_cast<float>(static_cast<qreal>(mouse_pos.y()) * dpr);
+-				InputManager::UpdatePointerAbsolutePosition(0, scaled_x, scaled_y);
++				const QPointF guest_pos = rigScaleToGuest(this, QPointF(mouse_pos) * dpr);
++				InputManager::UpdatePointerAbsolutePosition(0, static_cast<float>(guest_pos.x()), static_cast<float>(guest_pos.y()));
+ 			}
+ 			else
+ 			{
+diff --git a/pcsx2/Input/InputManager.cpp b/pcsx2/Input/InputManager.cpp
+index 10d05a7..50c54ae 100644
+--- a/pcsx2/Input/InputManager.cpp
++++ b/pcsx2/Input/InputManager.cpp
+@@ -1345,6 +1345,12 @@ void InputManager::UpdatePointerAbsolutePosition(u32 index, float x, float y)
+ 		ImGuiManager::UpdateMousePosition(x, y);
+ }
+ 
++void InputManager::ResetPointerAbsolutePosition(u32 index, float x, float y)
++{
++	s_host_pointer_positions[index][static_cast<u8>(InputPointerAxis::X)] = x;
++	s_host_pointer_positions[index][static_cast<u8>(InputPointerAxis::Y)] = y;
++}
++
+ void InputManager::UpdatePointerRelativeDelta(u32 index, InputPointerAxis axis, float d, bool raw_input)
+ {
+ 	s_host_pointer_positions[index][static_cast<u8>(axis)] += d;
+@@ -1591,6 +1597,13 @@ void InputManager::UpdateHostMouseMode()
+ 	}
+ 
+ 	const bool has_software_cursor = ImGuiManager::HasSoftwareCursor(0);
++	// ps2linux rig: in a VM with mouse integration the host pointer is absolute and ignores
++	// the warps of relative mode. WHITERHINO_MOUSE_ABSOLUTE=1 keeps absolute deltas instead.
++	if (has_relative_mode_bindings && std::getenv("WHITERHINO_MOUSE_ABSOLUTE"))
++	{
++		Host::SetMouseMode(false, true);
++		return;
++	}
+ 	Host::SetMouseMode(has_relative_mode_bindings, has_relative_mode_bindings || has_software_cursor);
+ }
+ 
+diff --git a/pcsx2/Input/InputManager.h b/pcsx2/Input/InputManager.h
+index c51f87d..f2ca55a 100644
+--- a/pcsx2/Input/InputManager.h
++++ b/pcsx2/Input/InputManager.h
+@@ -297,6 +297,9 @@ namespace InputManager
+ 	/// Updates absolute pointer position. Can call from UI thread, use when the host only reports absolute coordinates.
+ 	void UpdatePointerAbsolutePosition(u32 index, float x, float y);
+ 
++	/// ps2linux rig: sets the host pointer position without generating movement.
++	void ResetPointerAbsolutePosition(u32 index, float x, float y);
++
+ 	/// Updates relative pointer position. Can call from the UI thread, use when host supports relative coordinate reporting.
+ 	void UpdatePointerRelativeDelta(u32 index, InputPointerAxis axis, float d, bool raw_input = false);
+ 
+diff --git a/pcsx2/USB/usb-hid/usb-hid.cpp b/pcsx2/USB/usb-hid/usb-hid.cpp
+index 3cae553..617a2ff 100644
+--- a/pcsx2/USB/usb-hid/usb-hid.cpp
++++ b/pcsx2/USB/usb-hid/usb-hid.cpp
+@@ -729,7 +729,12 @@ namespace usb_hid
+ 			InputEvent evt;
+ 			evt.type = INPUT_EVENT_KIND_REL;
+ 			evt.u.rel.axis = static_cast<InputAxis>(axis);
+-			evt.u.rel.value = static_cast<s64>(delta);
++			// ps2linux rig: keep the fraction for the next event instead of truncating it away.
++			static float s_residue[2] = {};
++			float& residue = s_residue[static_cast<int>(axis) & 1];
++			residue += delta;
++			evt.u.rel.value = static_cast<s64>(residue);
++			residue -= static_cast<float>(evt.u.rel.value);
+ 			hid.ptr.eh_entry(&hid, &evt);
+ 			hid.ptr.eh_sync(&hid);
+ 		}
+-- 
+2.34.1
+

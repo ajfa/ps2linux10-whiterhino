@@ -1,0 +1,28 @@
+From 4923a4c382fd56f026883ff4b96ca2473410d6f3 Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 08/13] IOP DMA8: advance MADR past the transferred block
+
+Sony's PS2 Linux ATA DMA relay programs MADR once and moves 4 KB blocks one after
+another, relying on MADR ending past the previous block as on hardware. Every block
+landed on the same address, so only the first 4 KB of each disk read were right.
+---
+ pcsx2/IopDma.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/pcsx2/IopDma.cpp b/pcsx2/IopDma.cpp
+index 3b3abb7..a65d5f3 100644
+--- a/pcsx2/IopDma.cpp
++++ b/pcsx2/IopDma.cpp
+@@ -175,6 +175,8 @@ void psxDMA8Interrupt()
+ {
+ 	if (HW_DMA8_CHCR & 0x01000000)
+ 	{
++		// ps2linux rig: MADR ends past the block, Sony's ATA DMA relay relies on it.
++		HW_DMA8_MADR += (HW_DMA8_BCR >> 16) * (HW_DMA8_BCR & 0xFFFF) * 4;
+ 		HW_DMA8_CHCR &= ~0x01000000;
+ 		psxDmaInterrupt2(1);
+ 	}
+-- 
+2.34.1
+

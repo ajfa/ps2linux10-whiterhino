@@ -1,0 +1,110 @@
+From 3de50cffe304eb527dd69962b1ce518c931cea4d Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 05/13] USB OHCI: mask addresses to the IOP bus
+
+The IOP bus only decodes the low bits. NetBSD 1.6A hands the OHCI EE-physical
+addresses of IOP RAM (0x1c000000 + x), which were all out of range.
+---
+ pcsx2/USB/qemu-usb/usb-ohci.cpp | 24 +++++++++++++++++++-----
+ 1 file changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/pcsx2/USB/qemu-usb/usb-ohci.cpp b/pcsx2/USB/qemu-usb/usb-ohci.cpp
+index 627519f..0a674e9 100644
+--- a/pcsx2/USB/qemu-usb/usb-ohci.cpp
++++ b/pcsx2/USB/qemu-usb/usb-ohci.cpp
+@@ -279,9 +279,14 @@ void ohci_hard_reset(OHCIState* ohci)
+ 	ohci_roothub_reset(ohci);
+ }
+ 
++// netbsd-ps2 rig: the IOP bus only decodes the low bits; NetBSD 1.6A hands the
++// OHCI EE-physical addresses (0x1c000000 + x) of IOP RAM.
++#define IOP_BUS(a) ((a) & (sizeof(iopMem->Main) - 1))
++
+ /* Get an array of dwords from main memory */
+ __fi static int get_dwords(u32 addr, u32* buf, u32 num)
+ {
++	addr = IOP_BUS(addr);
+ 	if ((addr + (num * sizeof(u32))) > sizeof(iopMem->Main))
+ 		return 0;
+ 
+@@ -292,6 +297,7 @@ __fi static int get_dwords(u32 addr, u32* buf, u32 num)
+ /* Get an array of words from main memory */
+ __fi static int get_words(u32 addr, u16* buf, u32 num)
+ {
++	addr = IOP_BUS(addr);
+ 	if ((addr + (num * sizeof(u16))) > sizeof(iopMem->Main))
+ 		return 0;
+ 
+@@ -302,6 +308,7 @@ __fi static int get_words(u32 addr, u16* buf, u32 num)
+ /* Put an array of dwords in to main memory */
+ __fi static int put_dwords(u32 addr, u32* buf, u32 num)
+ {
++	addr = IOP_BUS(addr);
+ 	if ((addr + (num * sizeof(u32))) > sizeof(iopMem->Main))
+ 		return 0;
+ 
+@@ -312,6 +319,7 @@ __fi static int put_dwords(u32 addr, u32* buf, u32 num)
+ /* Put an array of dwords in to main memory */
+ __fi static int put_words(u32 addr, u16* buf, u32 num)
+ {
++	addr = IOP_BUS(addr);
+ 	if ((addr + (num * sizeof(u16))) > sizeof(iopMem->Main))
+ 		return 0;
+ 
+@@ -359,7 +367,7 @@ static inline int ohci_put_iso_td(OHCIState* ohci, u32 addr, struct ohci_iso_td*
+ /* Read/Write the contents of a TD from/to main memory.  */
+ static int ohci_copy_td(OHCIState* ohci, struct ohci_td* td, uint8_t* buf, u32 len, int write)
+ {
+-	u32 ptr = td->cbp;
++	u32 ptr = IOP_BUS(td->cbp);
+ 	const u32 n = std::min<u32>(0x1000 - (ptr & 0xfff), len);
+ 
+ 	if ((ptr + n) > sizeof(iopMem->Main))
+@@ -372,7 +380,7 @@ static int ohci_copy_td(OHCIState* ohci, struct ohci_td* td, uint8_t* buf, u32 l
+ 
+ 	if (n == len)
+ 		return 0;
+-	ptr = td->be & ~0xfffu;
++	ptr = IOP_BUS(td->be & ~0xfffu);
+ 	buf += n;
+ 	len -= n;
+ 
+@@ -391,7 +399,7 @@ static int ohci_copy_td(OHCIState* ohci, struct ohci_td* td, uint8_t* buf, u32 l
+ static int ohci_copy_iso_td(OHCIState* ohci, u32 start_addr, u32 end_addr,
+ 							uint8_t* buf, u32 len, int write)
+ {
+-	u32 ptr = start_addr;
++	u32 ptr = IOP_BUS(start_addr);
+ 	const u32 n = std::min<u32>(0x1000 - (ptr & 0xfff), len);
+ 
+ 	if ((ptr + n) > sizeof(iopMem->Main))
+@@ -404,7 +412,7 @@ static int ohci_copy_iso_td(OHCIState* ohci, u32 start_addr, u32 end_addr,
+ 
+ 	if (n == len)
+ 		return 0;
+-	ptr = end_addr & ~0xfffu;
++	ptr = IOP_BUS(end_addr & ~0xfffu);
+ 	buf += n;
+ 	len -= n;
+ 
+@@ -1099,9 +1107,15 @@ void ohci_frame_boundary(void* opaque)
+ {
+ 	OHCIState* ohci = (OHCIState*)opaque;
+ 
++	ohci->hcca = IOP_BUS(ohci->hcca);
+ 	if (ohci->hcca + sizeof(ohci_hcca) > sizeof(iopMem->Main))
+ 	{
+-		Console.Error("ohci->hcca pointer is out of range.");
++		static u32 s_lastBadHcca = 0xffffffff;
++		if (ohci->hcca != s_lastBadHcca)
++		{
++			s_lastBadHcca = ohci->hcca;
++			Console.Error("ohci->hcca pointer is out of range: %08x", ohci->hcca);
++		}
+ 		return;
+ 	}
+ 
+-- 
+2.34.1
+

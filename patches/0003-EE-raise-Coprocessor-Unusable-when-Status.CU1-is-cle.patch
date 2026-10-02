@@ -1,0 +1,41 @@
+From 2e9f13422e0cee85e256a23242b4045c660302db Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 03/13] EE: raise Coprocessor Unusable when Status.CU1 is clear
+
+Once a guest kernel is up, COP1 instructions with CU1 = 0 trap with CE = 1 as on a
+real R5900. Linux 2.2 relies on it for lazy FPU switching (do_cpu); without it
+processes clobbered each other's registers. NetBSD 1.6A (soft-float) needs it too.
+---
+ pcsx2/Interpreter.cpp | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/pcsx2/Interpreter.cpp b/pcsx2/Interpreter.cpp
+index c207745..071c734 100644
+--- a/pcsx2/Interpreter.cpp
++++ b/pcsx2/Interpreter.cpp
+@@ -225,6 +225,21 @@ static void execI()
+ 
+ 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
+ 
++	// netbsd-ps2 rig: honour Status.CU1 once a guest kernel is running. NetBSD 1.6A
++	// (NOFPU/SOFTFLOAT) keeps COP1 disabled and emulates FP from the Coprocessor
++	// Unusable trap, as real R5900 hardware delivers it. Games always set CU1.
++	if (g_guestKernelUp)
++	{
++		const u32 major = cpuRegs.code >> 26;
++		if ((major == 0x11 || major == 0x31 || major == 0x39) && !(cpuRegs.CP0.n.Status.val & (1u << 29)))
++		{
++			cpuRegs.pc -= 4;
++			cpuException(0x2C, cpuRegs.branch);
++			cpuRegs.CP0.n.Cause |= 0x10000000; // CE = 1
++			return;
++		}
++	}
++
+ 	opcode.interpret();
+ }
+ 
+-- 
+2.34.1
+

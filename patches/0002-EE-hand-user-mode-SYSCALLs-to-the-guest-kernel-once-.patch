@@ -1,0 +1,74 @@
+From 58295d41054bf88120e41ff88f7b0dce3c33303b Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 02/13] EE: hand user-mode SYSCALLs to the guest kernel once it
+ is running
+
+WHITERHINO_GUEST_ENTRY names the guest kernel entry point. Once the EE reaches it,
+g_guestKernelUp is set and every user-mode SYSCALL goes to the guest instead of the
+BIOS syscall HLE, which picks by v1 and wrote through a0 (NetBSD write(2, ...) died
+storing to 0x2).
+---
+ pcsx2/R5900.cpp           | 11 +++++++++++
+ pcsx2/R5900.h             |  3 +++
+ pcsx2/R5900OpcodeImpl.cpp |  5 ++++-
+ 3 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/pcsx2/R5900.cpp b/pcsx2/R5900.cpp
+index e3b6bcb..b659c00 100644
+--- a/pcsx2/R5900.cpp
++++ b/pcsx2/R5900.cpp
+@@ -299,8 +299,19 @@ void kernelreloadedSetBreakpoints(const char* addrListCsv)
+ 	}
+ }
+ 
++bool g_guestKernelUp = false;
++
+ void kernelreloadedCheckBreakpoint(u32 pc)
+ {
++	static const u32 s_guestEntry = [] {
++		const char* e = std::getenv("WHITERHINO_GUEST_ENTRY");
++		return e ? static_cast<u32>(std::strtoul(e, nullptr, 0)) : 0u;
++	}();
++	if (s_guestEntry && !g_guestKernelUp && pc == s_guestEntry)
++	{
++		g_guestKernelUp = true;
++		Console.WriteLn("netbsd-ps2: guest kernel entered at 0x%08x, BIOS syscall HLE off for user mode", pc);
++	}
+ 	if (s_kernelreloadedBreakpoints.empty())
+ 		return;
+ 	for (const u32 addr : s_kernelreloadedBreakpoints)
+diff --git a/pcsx2/R5900.h b/pcsx2/R5900.h
+index b4ff918..888f618 100644
+--- a/pcsx2/R5900.h
++++ b/pcsx2/R5900.h
+@@ -414,6 +414,9 @@ extern void cpuSetNextEvent( u32 startCycle, s32 delta );
+ // parser; checked every instruction from Interpreter.cpp's execI().
+ extern void kernelreloadedSetBreakpoints(const char* addrListCsv);
+ extern void kernelreloadedCheckBreakpoint(u32 pc);
++// netbsd-ps2 rig: true once the EE has reached WHITERHINO_GUEST_ENTRY (the guest
++// kernel's entry point); from then on user-mode SYSCALLs belong to the guest OS.
++extern bool g_guestKernelUp;
+ 
+ // kernelreloaded: bounded instruction-fetch trace over an address range,
+ // armed by -kload-trace-range "start,end[,maxHits]" (hex start/end, decimal
+diff --git a/pcsx2/R5900OpcodeImpl.cpp b/pcsx2/R5900OpcodeImpl.cpp
+index 6932d02..c901d9d 100644
+--- a/pcsx2/R5900OpcodeImpl.cpp
++++ b/pcsx2/R5900OpcodeImpl.cpp
+@@ -1014,8 +1014,11 @@ void SYSCALL()
+ 	// (0x8xxxxxxx / 0xAxxxxxxx), while Linux userspace lives below 0x80000000 and
+ 	// the Linux kernel never executes a syscall instruction itself. Requiring
+ 	// both makes the test safe to apply to the whole switch.
++	// netbsd-ps2 rig: NetBSD syscall numbers are small, so the v0 range test above
++	// never matches; once the guest kernel is up (g_guestKernelUp) any user-mode
++	// SYSCALL is the guest's. write(2, ...) had a0 = 2 and died storing to 0x2.
+ 	const bool linuxSyscall =
+-		cpuRegs.GPR.n.v0.UL[0] >= 4000 && cpuRegs.GPR.n.v0.UL[0] < 5000 &&
++		((cpuRegs.GPR.n.v0.UL[0] >= 4000 && cpuRegs.GPR.n.v0.UL[0] < 5000) || g_guestKernelUp) &&
+ 		cpuRegs.pc < 0x80000000;
+ 
+ 	if (cpuRegs.GPR.n.v1.SL[0] < 0)
+-- 
+2.34.1
+

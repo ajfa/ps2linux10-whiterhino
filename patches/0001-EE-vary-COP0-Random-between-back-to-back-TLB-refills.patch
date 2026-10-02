@@ -1,0 +1,47 @@
+From bb4754255b11e29e42b7aee13adc607e6c061190 Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 01/13] EE: vary COP0 Random between back-to-back TLB refills
+
+The interpreter does not advance cpuRegs.cycle between two refills with no branch in
+between, so two TLBWR landed on the same index and evicted each other forever
+(NetBSD 1.6A init: text page vs stack page). Real hardware decrements Random every
+instruction; add a per-call bump.
+---
+ pcsx2/COP0.cpp      | 7 ++++++-
+ pcsx2/DEV9/smap.cpp | 1 +
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/pcsx2/COP0.cpp b/pcsx2/COP0.cpp
+index e4b2360..ebf2309 100644
+--- a/pcsx2/COP0.cpp
++++ b/pcsx2/COP0.cpp
+@@ -472,7 +472,12 @@ static u32 cop0Random()
+ 	if (wired >= 47)
+ 		return 47;
+ 
+-	return 47 - static_cast<u32>(cpuRegs.cycle % (48 - wired));
++	// netbsd-ps2 rig: the interpreter does not advance cpuRegs.cycle between two
++	// back-to-back refills with no branch in between, so both TLBWRs landed on the
++	// same index and evicted each other forever (NetBSD init: text page vs stack
++	// page). Real hardware decrements Random every instruction; bump per call.
++	static u32 s_randomBump = 0;
++	return 47 - static_cast<u32>((cpuRegs.cycle + s_randomBump++) % (48 - wired));
+ }
+ 
+ // Whether the guest ever writes a valid entry is the whole question: a zero
+diff --git a/pcsx2/DEV9/smap.cpp b/pcsx2/DEV9/smap.cpp
+index 346cc8c..f885335 100644
+--- a/pcsx2/DEV9/smap.cpp
++++ b/pcsx2/DEV9/smap.cpp
+@@ -227,6 +227,7 @@ void tx_process()
+ 		}
+ 
+ 
++
+ 		pbd->ctrl_stat &= ~SMAP_BD_TX_READY;
+ 
+ 		//increase TXBD
+-- 
+2.34.1
+

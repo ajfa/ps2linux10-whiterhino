@@ -1,0 +1,58 @@
+From bdddb8b304dfbf473096ce805ea4a6701928725c Mon Sep 17 00:00:00 2001
+From: ajfa <3520832+ajfa@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 18:22:53 -0600
+Subject: [PATCH 09/13] DEV9: fix FIFO writes that wrap or exceed the FIFO
+
+IOPWriteFIFO copied the wrapped half of a block back to fifo + base instead of the
+start of the FIFO. And DEV9runFIFO did a single fill/drain pass in the write
+direction, so an IOP block larger than the 8 KB FIFO (PS2 Linux writes 12 KB) stalled
+forever; the guest timed out, reset the drive and turned DMA off.
+---
+ pcsx2/DEV9/DEV9.cpp | 23 +++++++++++++++--------
+ 1 file changed, 15 insertions(+), 8 deletions(-)
+
+diff --git a/pcsx2/DEV9/DEV9.cpp b/pcsx2/DEV9/DEV9.cpp
+index 9e1d4a8..394eeed 100644
+--- a/pcsx2/DEV9/DEV9.cpp
++++ b/pcsx2/DEV9/DEV9.cpp
+@@ -337,7 +337,7 @@ void IOPWriteFIFO()
+ 		const int was = SPD_DBUF_AVAIL_MAX * 512 - base;
+ 
+ 		std::memcpy(dev9.fifo + base, dev9.dma_iop_ptr + dev9.dma_iop_transfered, was);
+-		std::memcpy(dev9.fifo + base, dev9.dma_iop_ptr + dev9.dma_iop_transfered + was, write - was);
++		std::memcpy(dev9.fifo, dev9.dma_iop_ptr + dev9.dma_iop_transfered + was, write - was); // ps2linux rig: wrapped half went to fifo + base
+ 	}
+ 	else
+ 	{
+@@ -399,14 +399,21 @@ void DEV9runFIFO()
+ 	// Order operations based on iopWrite to ensure DMA has data/space to work with.
+ 	if (iopWrite)
+ 	{
+-		// Perform DMA from IOP.
+-		if (iopXfer)
+-			IOPWriteFIFO();
+-
+-		// Drain the FIFO
+-		if (hddXfer && !hddRead)
++		// ps2linux rig: an IOP block larger than the FIFO needs more than one fill/drain round.
++		for (;;)
+ 		{
+-			HDDReadFIFO();
++			const u32 before = dev9.fifo_bytes_write + dev9.fifo_bytes_read;
++
++			// Perform DMA from IOP.
++			if ((dev9.dma_iop_ptr != nullptr) && (dev9.xfr_ctrl & SPD_XFR_DMAEN))
++				IOPWriteFIFO();
++
++			// Drain the FIFO
++			if (dev9.ata->dmaReady && (dev9.if_ctrl & SPD_IF_ATA_DMAEN) && !hddRead)
++				HDDReadFIFO();
++
++			if (dev9.fifo_bytes_write + dev9.fifo_bytes_read == before)
++				break;
+ 		}
+ 	}
+ 	else
+-- 
+2.34.1
+
